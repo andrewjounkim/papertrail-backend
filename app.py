@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request
 from flask_cors import CORS
+from werkzeug.exceptions import HTTPException
 
 import icite
 import llm
@@ -49,9 +50,17 @@ def handle_app_error(err):
     return jsonify({"error": err.message}), err.status_code
 
 
+@app.errorhandler(HTTPException)
+def handle_http_exception(err):
+    """Flask/Werkzeug's own errors (404 unknown route, 405 wrong method, ...) -> JSON,
+    keeping their real status code instead of falling through to the 500 handler below."""
+    return jsonify({"error": err.description}), err.code
+
+
 @app.errorhandler(Exception)
 def handle_uncaught_exception(err):
-    """Catch-all so the frontend always gets JSON, never a raw traceback/HTML page."""
+    """Catch-all for genuinely unexpected errors, so the frontend always gets JSON,
+    never a raw traceback/HTML page."""
     logger.exception("Unhandled exception")
     return jsonify({"error": "Internal server error"}), 500
 
