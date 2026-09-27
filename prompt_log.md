@@ -63,3 +63,14 @@ Prompt: "/api/what-next."
 - Zero-citation short-circuit: if iCite has no citing PMIDs, `/api/what-next` returns immediately with an empty list and a plain message, skipping the LLM call entirely, per the brief.
 - Tested with curl: a paper with 2141 citations (10 recent 2025/2026 citing papers returned, ~4s total incl. the LLM call), a lightly-cited paper (2 citations, correctly summarized), a genuinely zero-citation very-recent PMID (found by searching PubMed sorted by date and checking iCite, confirmed empty list + message in 0.6s, no LLM call), missing pmid (400), nonexistent pmid (404).
 
+---
+
+## Step 5: `/api/trend`
+
+Prompt: "/api/trend."
+
+- New `llm.generate_trend_query`: system prompt asks for one plain PubMed query string (no quotes/explanation) capturing the paper's core topic from its title/abstract - the response is stripped of stray quoting and returned to the frontend so the user can see and edit it, per the brief.
+- `POST /api/trend` accepts `{"pmid": ...}` (generates the query via the LLM) or `{"query": ...}` (uses it verbatim - this is the "edit the query and re-run" path from the frontend, and skips the LLM entirely). Then calls `pubmed.search_count_for_year` once per year for the last 20 years (current year back 19) and returns `{query, years, counts}`.
+- Hit NCBI rate limiting (`429 Too Many Requests`) on the very first live test of the by-pmid path, because 20 sequential esearch calls in a row is bursty even under our throttle. Fixed by (1) widening the no-API-key throttle interval from 0.35s to 0.4s and (2) adding retry-with-backoff (up to 3 attempts, increasing sleep) specifically for 429s in `pubmed._get`, so a transient rate-limit blip doesn't fail the whole trend request. Also swapped the placeholder `NCBI_EMAIL` in `.env` for a real address, since NCBI asks every tool to identify a real contact.
+- Tested with curl: trend by pmid (20 real yearly counts + an LLM-generated query, ~9s total - acceptable for a demo given NCBI's rate limit), trend by an explicit edited query (skips the LLM, still ~8s for the 20 count calls), missing both pmid and query (400), nonexistent pmid with no query (404).
+
