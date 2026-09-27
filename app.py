@@ -11,6 +11,7 @@ Endpoints (added incrementally, see README.md for full docs):
 
 import logging
 import os
+from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request
@@ -19,7 +20,7 @@ from flask_cors import CORS
 import icite
 import llm
 import pubmed
-from errors import AppError, BadRequestError
+from errors import AppError, BadRequestError, UpstreamError
 
 load_dotenv()  # loads .env when running locally; on Render, real env vars are used instead
 
@@ -196,6 +197,31 @@ def api_what_next():
             "summary": summary_text,
         }
     )
+
+
+TREND_YEARS_BACK = 20  # ~last 20 years, inclusive of the current one
+
+
+@app.post("/api/trend")
+def api_trend():
+    body = _get_json_body()
+    query = str(body.get("query") or "").strip()
+    pmid = str(body.get("pmid") or "").strip()
+
+    if not query and not pmid:
+        raise BadRequestError("Provide either 'pmid' or 'query'")
+
+    if not query:
+        details = _get_paper_details(pmid)  # raises NotFoundError for a bad pmid
+        query = llm.generate_trend_query(details["title"], details["abstract"])
+        if not query:
+            raise UpstreamError("LLM did not return a usable search query")
+
+    current_year = datetime.now(timezone.utc).year
+    years = list(range(current_year - TREND_YEARS_BACK + 1, current_year + 1))
+    counts = [pubmed.search_count_for_year(query, year) for year in years]
+
+    return jsonify({"query": query, "years": years, "counts": counts})
 
 
 if __name__ == "__main__":

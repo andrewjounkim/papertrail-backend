@@ -21,7 +21,7 @@ _throttle_lock = threading.Lock()
 
 
 def _min_interval():
-    return 0.11 if os.environ.get("NCBI_API_KEY") else 0.35
+    return 0.11 if os.environ.get("NCBI_API_KEY") else 0.4
 
 
 def _throttle():
@@ -44,15 +44,30 @@ def _common_params():
     return params
 
 
+_MAX_RETRIES = 3
+
+
 def _get(path, params):
-    _throttle()
     url = f"{EUTILS_BASE}/{path}"
-    try:
-        resp = requests.get(url, params={**_common_params(), **params}, timeout=REQUEST_TIMEOUT)
-        resp.raise_for_status()
-        return resp
-    except requests.RequestException as err:
-        raise UpstreamError(f"PubMed request failed: {err}") from err
+    last_err = None
+    for attempt in range(_MAX_RETRIES):
+        _throttle()
+        try:
+            resp = requests.get(
+                url, params={**_common_params(), **params}, timeout=REQUEST_TIMEOUT
+            )
+            if resp.status_code == 429:
+                # NCBI's rate limit is a bit bursty in practice; back off and retry
+                # rather than failing a whole /api/trend request over one blip.
+                last_err = "429 Too Many Requests"
+                time.sleep(0.5 * (attempt + 1))
+                continue
+            resp.raise_for_status()
+            return resp
+        except requests.RequestException as err:
+            last_err = err
+            time.sleep(0.5 * (attempt + 1))
+    raise UpstreamError(f"PubMed request failed after {_MAX_RETRIES} attempts: {last_err}")
 
 
 # --- Input parsing -------------------------------------------------------

@@ -113,3 +113,23 @@ def summarize_citations(paper_title, citing_papers):
         f"Citing papers (most recent first):\n\n{listing}"
     )
     return _call(_CITATIONS_SYSTEM_PROMPT, user_message, max_tokens=350)
+
+
+# --- /api/trend ------------------------------------------------------------
+
+_TREND_QUERY_SYSTEM_PROMPT = (
+    "You write PubMed search queries. Given a paper's title and abstract, "
+    "write ONE concise PubMed search query (plain keywords/phrases, "
+    "optionally combined with AND/OR, using PubMed's standard search "
+    "syntax) that captures the paper's core research topic - broad enough "
+    "to find other papers in the same field, specific enough to not just "
+    "match a whole discipline. Respond with ONLY the query text itself: no "
+    "quotes around it, no explanation, no leading label like 'Query:'."
+)
+
+
+def generate_trend_query(title, abstract):
+    abstract_text = abstract or "(no abstract available - use the title only.)"
+    user_message = f"Title: {title}\n\nAbstract: {abstract_text}"
+    query = _call(_TREND_QUERY_SYSTEM_PROMPT, user_message, max_tokens=60)
+    return query.strip().strip('"').strip("'").rstrip(".")
