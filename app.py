@@ -17,6 +17,7 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 
 import icite
+import llm
 import pubmed
 from errors import AppError, BadRequestError
 
@@ -67,6 +68,28 @@ def _get_json_body():
     return body
 
 
+# In-memory caches. Fine for a single free-tier Render dyno for a class demo;
+# they reset on every deploy/restart, which is acceptable here.
+_paper_cache = {}  # pmid -> {title, authors, journal, year, doi, abstract}
+_explain_cache = {}  # (pmid, level) -> explanation text
+
+
+def _require_pmid(body):
+    pmid = str(body.get("pmid") or "").strip()
+    if not pmid:
+        raise BadRequestError("'pmid' is required")
+    return pmid
+
+
+def _get_paper_details(pmid):
+    """Title/authors/journal/year/doi/abstract for a PMID, cached in memory."""
+    if pmid not in _paper_cache:
+        summary = pubmed.get_summary(pmid)
+        abstract = pubmed.get_abstract(pmid)
+        _paper_cache[pmid] = {**summary, "abstract": abstract}
+    return _paper_cache[pmid]
+
+
 @app.post("/api/paper")
 def api_paper():
     body = _get_json_body()
@@ -80,24 +103,43 @@ def api_paper():
             "Could not recognize that as a PMID, PubMed URL, or DOI"
         )
 
-    summary = pubmed.get_summary(pmid)
-    abstract = pubmed.get_abstract(pmid)
+    details = _get_paper_details(pmid)
     citation_stats = icite.get_icite_data(pmid)
 
     return jsonify(
         {
             "pmid": pmid,
-            "title": summary["title"],
-            "authors": summary["authors"],
-            "journal": summary["journal"],
-            "year": summary["year"],
-            "doi": summary["doi"],
-            "abstract": abstract,
+            "title": details["title"],
+            "authors": details["authors"],
+            "journal": details["journal"],
+            "year": details["year"],
+            "doi": details["doi"],
+            "abstract": details["abstract"],
             "pubmed_url": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
             "citation_count": citation_stats["citation_count"],
             "relative_citation_ratio": citation_stats["relative_citation_ratio"],
         }
     )
+
+
+@app.post("/api/explain")
+def api_explain():
+    body = _get_json_body()
+    pmid = _require_pmid(body)
+    level = str(body.get("level") or "").strip()
+    if level not in llm.VALID_LEVELS:
+        raise BadRequestError(
+            f"'level' must be one of {sorted(llm.VALID_LEVELS)}"
+        )
+
+    cache_key = (pmid, level)
+    if cache_key not in _explain_cache:
+        details = _get_paper_details(pmid)  # raises NotFoundError for a bad pmid
+        _explain_cache[cache_key] = llm.explain_paper(
+            details["title"], details["abstract"], level
+        )
+
+    return jsonify({"level": level, "explanation": _explain_cache[cache_key]})
 
 
 if __name__ == "__main__":
