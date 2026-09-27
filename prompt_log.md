@@ -25,3 +25,19 @@ Prompt: "Backend skeleton: /health, .gitignore, .env.example, requirements.txt. 
 - `.env.example` documents every env var the app needs: `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `NCBI_API_KEY`, `NCBI_EMAIL`, `NCBI_TOOL_NAME`, `ALLOWED_ORIGINS`, `PORT`.
 - `requirements.txt`: flask, flask-cors, requests, python-dotenv, gunicorn, anthropic.
 - Verified locally: `python app.py` (port 5000 was taken by macOS AirPlay Receiver, moved local dev to 5001 via `.env`) → `curl localhost:5001/health` → `{"status": "ok"}`.
+
+---
+
+## Step 2: `/api/paper`
+
+Prompt: "/api/paper with PubMed + iCite. Test with curl."
+
+- Before writing code, hit the live iCite and E-utilities endpoints directly with curl to verify real field names rather than guessing (per the brief's instruction). Findings that shaped the code:
+  - iCite: `citation_count`, `relative_citation_ratio` (float or absent for very new/uncited papers), a flat `cited_by` PMID list, and `citedByPmidsByYear` — a list of single-key `{pmid: year}` dicts, which is what lets `/api/what-next` sort citing papers most-recent-first later.
+  - esummary (JSON) doesn't HTTP-404 on an unknown PMID — it echoes the id back with `{"error": "cannot get document summary"}` inside `result`, so "not found" has to be detected by inspecting the payload, not the status code. Caught this via a live curl test with a bogus PMID and fixed `pubmed.get_summary`.
+  - efetch abstracts come back as PubMed XML with one or more `<AbstractText Label="...">` elements (structured abstracts have multiple, e.g. Background/Methods/Results); parsed with `xml.etree.ElementTree` and re-joined with labels preserved.
+  - esearch resolves a DOI via the `[doi]` field tag: `term=10.xxxx/yyyy[doi]`.
+- New modules: `errors.py` (typed `BadRequestError`/`NotFoundError`/`UpstreamError` → 400/404/502, raised from anywhere and turned into JSON by a Flask `errorhandler`), `pubmed.py` (input normalization for PMID/URL/DOI, esearch/esummary/efetch, a process-wide throttle honoring NCBI's 3 req/s / 10 req/s-with-key limit), `icite.py` (citation stats + citing-PMID/year list).
+- `POST /api/paper` wires these together and returns normalized metadata + abstract + citation stats.
+- Tested with curl: bare PMID, DOI, PubMed URL (all resolve to the same paper), empty input (400), unrecognizable input (400), non-existent PMID (404), and a missing JSON body (400).
+
