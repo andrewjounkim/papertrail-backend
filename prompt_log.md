@@ -52,3 +52,14 @@ Prompt: "wait im going to use an open ai key can you help set that up" (mid-step
 - `POST /api/explain` in `app.py`: validates `pmid`/`level`, reuses a new `_get_paper_details()` in-memory cache (also used by `/api/paper`) to avoid re-hitting PubMed, then caches the LLM's explanation itself by `(pmid, level)` so flipping the slider back and forth doesn't re-call the API.
 - Hit a real bug on first live test: `openai==1.54.4`'s bundled httpx client broke against httpx 0.28+ (`TypeError: Client.__init__() got an unexpected keyword argument 'proxies'`), a known version-skew issue. Pinned `httpx==0.27.2` in `requirements.txt` to fix it. Verified all three levels return distinct, appropriately-pitched explanations, the `(pmid, level)` cache returns in ~15ms on a repeat call, and 400/400/404 fire correctly for an invalid level, missing pmid, and nonexistent pmid.
 
+---
+
+## Step 4: `/api/what-next`
+
+Prompt: "/api/what-next."
+
+- iCite's `citedByPmidsByYear` (parsed in `icite.py`, sorted most-recent-first) gives the top 10 citing PMIDs without an extra API call. Getting their titles/abstracts naively would be 20 PubMed requests (10 esummary + 10 efetch); instead added `pubmed.get_summaries()`/`get_abstracts()`, which each take a **comma-separated batch of PMIDs in one request** (NCBI supports this natively), cutting it to 2 calls. `get_summary()`/`get_abstract()` (singular) now just call the batch versions with a list of one, so there's one parsing path.
+- New system prompt in `llm.py` (`summarize_citations`) that's explicit about the grounding constraint from the brief: it's given only titles + (when available) abstracts of the citing papers, told it hasn't read the full text of anything, told not to invent findings, and told to end its own output noting the summary is based only on the retrieved titles/abstracts.
+- Zero-citation short-circuit: if iCite has no citing PMIDs, `/api/what-next` returns immediately with an empty list and a plain message, skipping the LLM call entirely, per the brief.
+- Tested with curl: a paper with 2141 citations (10 recent 2025/2026 citing papers returned, ~4s total incl. the LLM call), a lightly-cited paper (2 citations, correctly summarized), a genuinely zero-citation very-recent PMID (found by searching PubMed sorted by date and checking iCite, confirmed empty list + message in 0.6s, no LLM call), missing pmid (400), nonexistent pmid (404).
+
