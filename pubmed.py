@@ -97,16 +97,7 @@ def _doi_to_pmid(doi):
 
 # --- Metadata / abstract ---------------------------------------------------
 
-def get_summary(pmid):
-    """Title, authors, journal, year, doi for a PMID."""
-    resp = _get("esummary.fcgi", {"db": "pubmed", "id": pmid, "retmode": "json"})
-    result = resp.json().get("result", {})
-    doc = result.get(pmid)
-    # NCBI doesn't 404 on an unknown PMID; it echoes the id back with an
-    # "error" field instead, so we have to check for that explicitly.
-    if not doc or doc.get("error"):
-        raise NotFoundError(f"No PubMed record found for PMID {pmid}")
-
+def _parse_summary_doc(pmid, doc):
     doi = ""
     for article_id in doc.get("articleids", []):
         if article_id.get("idtype") == "doi":
@@ -131,26 +122,75 @@ def get_summary(pmid):
     }
 
 
-def get_abstract(pmid):
-    """Plain-text abstract for a PMID (empty string if the article has none)."""
+def get_summaries(pmids):
+    """Batch esummary lookup: {pmid: {title, authors, journal, year, doi}, ...}.
+
+    One request for any number of PMIDs (NCBI supports comma-separated ids),
+    instead of one request per paper - important for /api/what-next, which
+    needs metadata for up to 10 citing papers. PMIDs NCBI doesn't recognize
+    are silently omitted from the result rather than raising.
+    """
+    if not pmids:
+        return {}
     resp = _get(
-        "efetch.fcgi",
-        {"db": "pubmed", "id": pmid, "rettype": "abstract", "retmode": "xml"},
+        "esummary.fcgi", {"db": "pubmed", "id": ",".join(pmids), "retmode": "json"}
     )
+    result = resp.json().get("result", {})
+    out = {}
+    for pmid in pmids:
+        doc = result.get(pmid)
+        # NCBI doesn't 404 on an unknown PMID; it echoes the id back with an
+        # "error" field instead, so we have to check for that explicitly.
+        if not doc or doc.get("error"):
+            continue
+        out[pmid] = _parse_summary_doc(pmid, doc)
+    return out
+
+
+def get_summary(pmid):
+    """Title, authors, journal, year, doi for a single PMID."""
+    result = get_summaries([pmid])
+    if pmid not in result:
+        raise NotFoundError(f"No PubMed record found for PMID {pmid}")
+    return result[pmid]
+
+
+def _parse_abstracts_xml(xml_bytes):
     try:
-        root = ET.fromstring(resp.content)
+        root = ET.fromstring(xml_bytes)
     except ET.ParseError as err:
         raise UpstreamError(f"Could not parse PubMed abstract XML: {err}") from err
 
-    parts = []
-    for abstract_text in root.iter("AbstractText"):
-        label = abstract_text.get("Label")
-        text = "".join(abstract_text.itertext()).strip()
-        if not text:
+    out = {}
+    for article in root.iter("PubmedArticle"):
+        pmid_el = article.find(".//MedlineCitation/PMID")
+        if pmid_el is None or not pmid_el.text:
             continue
-        parts.append(f"{label}: {text}" if label else text)
+        parts = []
+        for abstract_text in article.iter("AbstractText"):
+            label = abstract_text.get("Label")
+            text = "".join(abstract_text.itertext()).strip()
+            if not text:
+                continue
+            parts.append(f"{label}: {text}" if label else text)
+        out[pmid_el.text] = "\n\n".join(parts)
+    return out
 
-    return "\n\n".join(parts)
+
+def get_abstracts(pmids):
+    """Batch efetch lookup: {pmid: abstract_text, ...} (one request for all ids)."""
+    if not pmids:
+        return {}
+    resp = _get(
+        "efetch.fcgi",
+        {"db": "pubmed", "id": ",".join(pmids), "rettype": "abstract", "retmode": "xml"},
+    )
+    return _parse_abstracts_xml(resp.content)
+
+
+def get_abstract(pmid):
+    """Plain-text abstract for a single PMID (empty string if it has none)."""
+    return get_abstracts([pmid]).get(pmid, "")
 
 
 # --- Yearly counts (for the trend chart) -----------------------------------

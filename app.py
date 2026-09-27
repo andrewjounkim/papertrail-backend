@@ -142,6 +142,62 @@ def api_explain():
     return jsonify({"level": level, "explanation": _explain_cache[cache_key]})
 
 
+@app.post("/api/what-next")
+def api_what_next():
+    body = _get_json_body()
+    pmid = _require_pmid(body)
+    details = _get_paper_details(pmid)  # raises NotFoundError for a bad pmid
+
+    citation_stats = icite.get_icite_data(pmid)
+    cited_by_years = citation_stats["cited_by_years"]  # most-recent-first already
+
+    if not cited_by_years:
+        return jsonify(
+            {
+                "citation_count": citation_stats["citation_count"],
+                "citing_papers": [],
+                "summary": "No papers have cited this one yet, according to iCite.",
+            }
+        )
+
+    top = cited_by_years[:10]
+    top_pmids = [str(item["pmid"]) for item in top]
+
+    # Two batched PubMed calls cover all 10 citing papers, instead of 20
+    # individual ones.
+    summaries = pubmed.get_summaries(top_pmids)
+    abstracts = pubmed.get_abstracts(top_pmids)
+
+    citing_papers = []
+    llm_inputs = []
+    for item in top:
+        cited_pmid = str(item["pmid"])
+        summary = summaries.get(cited_pmid)
+        title = summary["title"] if summary else "(title unavailable)"
+        journal = summary["journal"] if summary else ""
+        year = summary["year"] if summary else str(item["year"])
+        citing_papers.append(
+            {
+                "pmid": cited_pmid,
+                "title": title,
+                "year": year,
+                "journal": journal,
+                "pubmed_url": f"https://pubmed.ncbi.nlm.nih.gov/{cited_pmid}/",
+            }
+        )
+        llm_inputs.append({"title": title, "year": year, "abstract": abstracts.get(cited_pmid, "")})
+
+    summary_text = llm.summarize_citations(details["title"], llm_inputs)
+
+    return jsonify(
+        {
+            "citation_count": citation_stats["citation_count"],
+            "citing_papers": citing_papers,
+            "summary": summary_text,
+        }
+    )
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=True)

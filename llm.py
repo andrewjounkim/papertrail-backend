@@ -81,3 +81,35 @@ def explain_paper(title, abstract, level):
     abstract_text = abstract or "(no abstract available - use the title only.)"
     user_message = f"Title: {title}\n\nAbstract: {abstract_text}"
     return _call(system, user_message, max_tokens=400)
+
+
+# --- /api/what-next ------------------------------------------------------
+
+_CITATIONS_SYSTEM_PROMPT = (
+    "You summarize how later research has engaged with an original paper, "
+    "based ONLY on the titles (and abstracts, when available) of a list of "
+    "papers that cite it - you have not read the full text of any of them "
+    "and have no other knowledge of this research area or these papers. "
+    "In 3-5 sentences, describe patterns you can actually see in the given "
+    "titles/abstracts: common applications, methods, extensions, or "
+    "disagreements. If some entries have no abstract, rely on their titles "
+    "only for those. Do not invent findings, numbers, or conclusions that "
+    "are not visible in the text given to you. End your summary with a "
+    "short clause making clear it is based only on the retrieved titles/"
+    "abstracts of these citing papers, not their full text."
+)
+
+
+def summarize_citations(paper_title, citing_papers):
+    """citing_papers: list of {title, year, abstract} dicts, most-recent first."""
+    lines = []
+    for i, paper in enumerate(citing_papers, 1):
+        abstract_text = (paper.get("abstract") or "").strip() or "(no abstract retrieved)"
+        lines.append(f'{i}. "{paper["title"]}" ({paper["year"]})\nAbstract: {abstract_text}')
+    listing = "\n\n".join(lines)
+
+    user_message = (
+        f'Original paper: "{paper_title}"\n\n'
+        f"Citing papers (most recent first):\n\n{listing}"
+    )
+    return _call(_CITATIONS_SYSTEM_PROMPT, user_message, max_tokens=350)
