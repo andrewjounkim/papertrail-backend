@@ -201,8 +201,8 @@ curl -X POST http://127.0.0.1:5000/api/trend \
 
 ## 5. Deployed URLs
 
-- Backend (Render): `https://papertrail-backend.onrender.com` <!-- placeholder — update after deploying -->
-- Frontend (GitHub Pages): `https://andrewjounkim.github.io/papertrail-frontend/` <!-- placeholder — update after deploying -->
+- Backend (Render): https://papertrail-backend-un64.onrender.com
+- Frontend (GitHub Pages): https://andrewjounkim.github.io/papertrail-frontend/
 
 ---
 
