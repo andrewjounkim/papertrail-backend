@@ -74,3 +74,17 @@ Prompt: "/api/trend."
 - Hit NCBI rate limiting (`429 Too Many Requests`) on the very first live test of the by-pmid path, because 20 sequential esearch calls in a row is bursty even under our throttle. Fixed by (1) widening the no-API-key throttle interval from 0.35s to 0.4s and (2) adding retry-with-backoff (up to 3 attempts, increasing sleep) specifically for 429s in `pubmed._get`, so a transient rate-limit blip doesn't fail the whole trend request. Also swapped the placeholder `NCBI_EMAIL` in `.env` for a real address, since NCBI asks every tool to identify a real contact.
 - Tested with curl: trend by pmid (20 real yearly counts + an LLM-generated query, ~9s total - acceptable for a demo given NCBI's rate limit), trend by an explicit edited query (skips the LLM, still ~8s for the 20 count calls), missing both pmid and query (400), nonexistent pmid with no query (404).
 
+---
+
+## Step 6: Frontend (in `papertrail-frontend`, developed locally first per the user's call)
+
+Prompt: "Frontend wired to the local backend; test every error case."
+
+- Single page (`index.html` + `style.css` + `app.js`), sections in the brief's order: input + example chips, paper card, level slider + explanation, what-happened-next, trend chart. Chart.js pulled from the jsdelivr CDN.
+- `API_BASE` is one constant at the top of `app.js` (currently `http://127.0.0.1:5001`, to be swapped for the Render URL at deploy time). All backend calls go through a shared `apiPost`/`apiGet` helper with an `AbortController` timeout, so a hung request always resolves into a friendly error instead of spinning forever.
+- After `/api/paper` resolves, `/api/explain`, `/api/what-next`, and `/api/trend` are kicked off in parallel (not chained) so one slow section never blocks the others, each with its own loading/error state.
+- `checkServerHealth()` calls `/health` on page load; if it takes >1.5s, shows "Waking up the server, this can take up to a minute…" (handles Render free-tier cold starts).
+- Caught and fixed a real bug before it shipped: the explain-slider dedupe check only compared reading *level*, not level+pmid, so looking up a second paper at the same slider position would skip the fetch and silently show the first paper's stale explanation. Fixed by keying the dedupe check on `${pmid}:${level}`.
+- Also hardened the citing-papers list against unsafe HTML string interpolation (titles pulled straight from PubMed could contain `&`/`<`) by building those DOM nodes with `textContent` instead of `innerHTML` + template strings.
+- Verified locally end-to-end: served the frontend with `python3 -m http.server 5500` (matches the backend's default `ALLOWED_ORIGINS`), confirmed the CORS preflight + actual request both succeed from `http://127.0.0.1:5500`, and confirmed a request from an untrusted origin (`https://evil-site.example.com`) gets **no** `Access-Control-Allow-Origin` header back. All static files (html/css/js) and the Chart.js CDN URL load with HTTP 200. Remaining error-path testing (empty input, fake PMID, backend stopped) to be done by hand in an actual browser next.
+
