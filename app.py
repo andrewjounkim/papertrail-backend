@@ -65,6 +65,27 @@ def handle_uncaught_exception(err):
     return jsonify({"error": "Internal server error"}), 500
 
 
+@app.get("/")
+def index():
+    """Friendly landing response so the bare URL isn't just a 404 - this is a
+    JSON API with no homepage, not a broken deploy."""
+    return jsonify(
+        {
+            "service": "PaperTrail backend",
+            "status": "ok",
+            "frontend": "https://andrewjounkim.github.io/papertrail-frontend/",
+            "readme": "https://github.com/andrewjounkim/papertrail-backend#readme",
+            "endpoints": {
+                "GET /health": "liveness check",
+                "POST /api/paper": "{input: pmid|url|doi} -> paper metadata + citation stats",
+                "POST /api/explain": "{pmid, level} -> plain-language explanation",
+                "POST /api/what-next": "{pmid} -> citing papers + AI summary",
+                "POST /api/trend": "{pmid|query} -> yearly PubMed publication counts",
+            },
+        }
+    )
+
+
 @app.get("/health")
 def health():
     return jsonify({"status": "ok"})
